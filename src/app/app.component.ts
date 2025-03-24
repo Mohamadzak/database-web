@@ -1,7 +1,8 @@
 import { Component } from '@angular/core';
-import { HttpClient, HttpClientModule } from '@angular/common/http';  // Import HttpClient
+import { HttpClient, HttpClientModule } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
 import { CommonModule } from '@angular/common';
+import { BehaviorSubject, catchError, switchMap, tap, of } from 'rxjs';
 
 @Component({
   selector: 'app-root',
@@ -11,41 +12,61 @@ import { CommonModule } from '@angular/common';
   styleUrls: ['./app.component.scss']
 })
 export class AppComponent {
-[x: string]: any;
-  users: any[] = [];  // Array to store users displayed in the table
-  newUser: any = {} ;  // New user data to be added
+  private usersSubject = new BehaviorSubject<any[]>([]); // RxJS BehaviorSubject for users
+  users$ = this.usersSubject.asObservable(); // Observable for UI binding
+  newUser: any = {}; // New user data
 
   constructor(private http: HttpClient) {}
 
-  addUser() {
-    console.log('New user data before submitting:', this.newUser);  // Log the data before sending it
-  
-    this.http.post('http://localhost:3000/api/users', this.newUser)
-      .subscribe((response: any) => {
-        console.log('User added:', response);
-        this.users.push(response);  // Add the new user to the table
-        this.newUser = {};  // Reset form fields
-      }, error => {
-        console.error('Error adding user:', error);  // Handle error response
-      });
-  }
-  
   ngOnInit() {
-    // Fetch existing users from the backend when the component initializes
-    this.http.get('http://localhost:3000/api/users')
-      .subscribe((response: any) => {
-        this.users = response;  // Populate the table with existing users
-      });
+    // Fetch users when component initializes
+    this.fetchUsers();
   }
-  
+
+  fetchUsers() {
+    this.http.get<any[]>('http://localhost:3000/api/users')
+      .pipe(
+        tap(users => this.usersSubject.next(users)), // Update BehaviorSubject
+        catchError(error => {
+          console.error('Error fetching users:', error);
+          return of([]); // Return an empty array in case of error
+        })
+      )
+      .subscribe();
+  }
+
+  addUser() {
+    console.log('New user data before submitting:', this.newUser);
+    
+    this.http.post<any>('http://localhost:3000/api/users', this.newUser)
+      .pipe(
+        tap(response => {
+          console.log('User added:', response);
+          this.usersSubject.next([...this.usersSubject.value, response]); // Add new user reactively
+          this.newUser = {}; // Reset form
+        }),
+        catchError(error => {
+          console.error('Error adding user:', error);
+          return of(null); // Handle error without breaking the stream
+        })
+      )
+      .subscribe();
+  }
+
   deleteUser(id: number) {
     if (confirm("Are you sure you want to delete this user?")) {
       this.http.delete(`http://localhost:3000/api/users/${id}`)
-        .subscribe(() => {
-          console.log(`User with ID ${id} deleted`);
-          this.users = this.users.filter(user => user.id !== id); // Remove user from UI
-        });
+        .pipe(
+          tap(() => {
+            console.log(`User with ID ${id} deleted`);
+            this.usersSubject.next(this.usersSubject.value.filter(user => user.id !== id)); // Remove user reactively
+          }),
+          catchError(error => {
+            console.error('Error deleting user:', error);
+            return of(null); // Handle error gracefully
+          })
+        )
+        .subscribe();
     }
   }
-  
 }
